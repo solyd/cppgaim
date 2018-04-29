@@ -1,0 +1,8 @@
+window:
+  width: 800
+  height: 600
+
+# font:
+#   - name: default
+#     path: resources/fonts/SourceCodePro-Regular.ttf
+#     size: 13
