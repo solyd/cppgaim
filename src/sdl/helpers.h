@@ -13,6 +13,7 @@
 namespace sdl {
 
 #define SDL_UNPACK_COLOR(c) (c).r, (c).g, (c).b, (c).a
+#define SDL_UNPACK_POINT(p) (p).x, (p).y
 
 #define SDL_DECL_CREATE_FULL(name, lower_name, unique_type, sdl_type, sdl_create, sdl_destroy) \
   using unique_type = utils::custom_unique_ptr<sdl_type, sdl_destroy>; \
@@ -57,8 +58,32 @@ decltype(auto) init(Args&& ... args) {
   return utils::make_guard([]() { SDL_Quit(); });
 }
 
+void set_color_key(SDL_Surface& surface, SDL_Color color) {
+  if (SDL_SetColorKey(&surface, 1, SDL_MapRGBA(surface.format, SDL_UNPACK_COLOR(color))) != 0) {
+    throw sdl::Error(fmt::format("Failed to set color key: {}", SDL_GetError()));
+  }
+}
+
+SDL_Color get_pixel(SDL_Surface& surface, int x, int y) {
+  if (x >= surface.w || y >= surface.h) {
+    throw sdl::Error(fmt::format("Pixel is out of bounds: x={}, y={} vs. surface.w={}, surface.h={}",
+                                 x, y, surface.w, surface.h));
+  }
+
+  auto pixel = static_cast<Uint32*>(surface.pixels)[(y * surface.w) + x];
+
+  SDL_Color res;
+  SDL_GetRGBA(pixel, surface.format, &res.r, &res.g, &res.b, &res.a);
+
+  return res;
+}
+
+}
+
+namespace ttf {
+
 template<typename... Args>
-decltype(auto) init_ttf(Args&& ...) {
+decltype(auto) init(Args&& ...) {
   int res = TTF_Init();
 
   if (res != 0) {
@@ -67,10 +92,6 @@ decltype(auto) init_ttf(Args&& ...) {
 
   return utils::make_guard([]() { TTF_Quit(); });
 }
-
-}
-
-namespace ttf {
 
 using unique_font = utils::custom_unique_ptr<TTF_Font, TTF_CloseFont>;
 
@@ -107,6 +128,31 @@ make_texture(SDL_Renderer& renderer,
     surface->w,
     surface->h
   );
+}
+
+}
+
+namespace img {
+
+template<typename... Args>
+decltype(auto) init_png(Args&& ...) {
+  int res = IMG_Init(IMG_INIT_PNG);
+
+  if (res == 0) {
+    throw sdl::Error(fmt::format("Failed to init IMG png: {}", IMG_GetError()));
+  }
+
+  return utils::make_guard([]() { IMG_Quit(); });
+}
+
+sdl::unique_surface load(const std::string& path) {
+  SDL_Surface* res = IMG_Load(path.c_str());
+
+  if (res == nullptr) {
+    throw sdl::Error(fmt::format("Failed to open img: {}", IMG_GetError()));
+  }
+
+  return sdl::unique_surface(res);
 }
 
 }

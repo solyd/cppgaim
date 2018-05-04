@@ -28,61 +28,10 @@ make_fps_textures(SDL_Renderer& renderer, TTF_Font& font, int max_fps) {
         renderer,
         font,
         fmt::format("fps: {}", i),
-        {255, 255, 255, 0}));
+        {0, 0, 0, 0}));
   }
 
   return res;
-};
-
-class Cell {
-public:
-  Cell() = default;
-
-  Cell(SDL_Rect rect_, SDL_Color color_, bool is_filled_)
-    : rect_(rect_), color_(color_), is_filled_(is_filled_) {}
-
-  void render(SDL_Renderer& r) {
-    SDL_SetRenderDrawColor(&r, SDL_UNPACK_COLOR(color_));
-    (is_filled_ ? SDL_RenderFillRect : SDL_RenderDrawRect)(&r, &rect_);
-  }
-
-  void set(SDL_Rect rect) { rect_ = rect; }
-  void set(SDL_Color color) { color_ = color; }
-  void set(bool is_filled) { is_filled_ = is_filled; }
-
-private:
-  SDL_Rect rect_;
-  SDL_Color color_;
-  bool is_filled_;
-};
-
-class Grid {
-private:
-  using CellsArray = std::vector<std::vector<Cell>>;
-
-public:
-  Grid(CellsArray::size_type num_cells_w, CellsArray::size_type num_cells_h)
-    : cells_(num_cells_w, std::vector<Cell>(num_cells_h)) {}
-
-  void set_screen_size(int w, int h) {
-    int pixels_per_cell_w = static_cast<int>(w / num_cells_w());
-    int pixels_per_cell_h = static_cast<int>(h / num_cells_h());
-
-    int leftover_w = static_cast<int>(w - (pixels_per_cell_w * num_cells_w()));
-//    int leftover_h =
-
-    for (auto& column : cells_) {
-      for (auto& cell : column) {
-      }
-    }
-  }
-
-private:
-  CellsArray::size_type num_cells_w() { return cells_.size(); }
-  CellsArray::size_type num_cells_h() { return cells_[0].size(); }
-
-private:
-  CellsArray cells_;
 };
 
 int main(int argc, char* argv[]) {
@@ -93,24 +42,64 @@ int main(int argc, char* argv[]) {
 
   try {
     auto sdl_quit = sdl::init(SDL_INIT_VIDEO);
-    auto ttf_quit = sdl::init_ttf();
+    auto ttf_quit = ttf::init();
+    auto img_quit = img::init_png();
+
+    auto screen_w = config["window"]["width"].as<int>();
+    auto screen_h = config["window"]["height"].as<int>();
 
     auto window = sdl::make_window(
-      "SDL2Test",
+      "cppgaim",
       SDL_WINDOWPOS_UNDEFINED,
       SDL_WINDOWPOS_UNDEFINED,
-      config["window"]["width"].as<int>(),
-      config["window"]["height"].as<int>(),
+      screen_w,
+      screen_h,
       SDL_WINDOW_SHOWN
     );
 
-    auto renderer = sdl::make_renderer(window.get(), -1, SDL_RENDERER_ACCELERATED);
+    auto renderer = sdl::make_renderer(window.get(), -1, SDL_RENDERER_ACCELERATED | SDL_RENDERER_PRESENTVSYNC);
     auto font = ttf::open_font("resources/fonts/SourceCodePro-Regular.ttf", 13);
+
+    //   _____            _ _
+    //  / ____|          (_) |
+    // | (___  _ __  _ __ _| |_ ___  ___
+    //  \___ \| '_ \| '__| | __/ _ \/ __|
+    //  ____) | |_) | |  | | ||  __/\__ \
+    // |_____/| .__/|_|  |_|\__\___||___/
+    //        | |
+    //        |_|
+    // ================================================================================
+    auto sprite_sheet = img::load("resources/player.png");
+    sdl::set_color_key(*sprite_sheet, sdl::get_pixel(*sprite_sheet, 0, 0));
+    auto sprite_sheet_texture = sdl::make_texture_from(*renderer, *sprite_sheet);
+    int sprite_size = 32;
+
+    std::vector<SDL_Rect> up;
+    up.push_back({sprite_size * 0, 0, sprite_size, sprite_size});
+    up.push_back({sprite_size * 1, 0, sprite_size, sprite_size});
+
+    std::vector<SDL_Rect> right;
+    right.push_back({sprite_size * 2, 0, sprite_size, sprite_size});
+    right.push_back({sprite_size * 3, 0, sprite_size, sprite_size});
+
+    std::vector<SDL_Rect> down;
+    down.push_back({sprite_size * 4, 0, sprite_size, sprite_size});
+    down.push_back({sprite_size * 5, 0, sprite_size, sprite_size});
+
+    std::vector<SDL_Rect> left;
+    left.push_back({sprite_size * 6, 0, sprite_size, sprite_size});
+    left.push_back({sprite_size * 7, 0, sprite_size, sprite_size});
+
+    SDL_Rect& default_sprite = down[0];
+
+    std::vector<SDL_Rect>* active_animation = &down;
+    Uint32 curr_sprite_index = 0;
+
+    SDL_Point curr_pos {50, 50};
+    // ================================================================================
 
     int max_fps = 120;
     auto fps_textures = make_fps_textures(*renderer, *font, max_fps);
-
-    Cell cell({40, 40, 40, 40}, {255, 104, 180}, false);
 
     Uint32 goal_fps = 60;
     Uint32 goal_ticks_per_loop = 1000 / goal_fps;
@@ -118,31 +107,78 @@ int main(int argc, char* argv[]) {
     Uint32 num_frames_since_measure = 0;
     Uint32 ticks_since_measure = 0;
     Uint32 measure_every_n_ticks = 1000;
+    Uint32 num_frames = 0;
+    Uint32 ticks_last_animation = 0;
+
+    Uint32 frame_times[100];
+    int frame_times_index = 0;
     while (true) {
       Uint32 loop_ticks_start = SDL_GetTicks();
+
+      frame_times[frame_times_index] = loop_ticks_start;
+      frame_times_index++;
+
+      if (frame_times_index >= 100) {
+        frame_times_index = 0;
+
+        Uint32 frame_time_diffs[99];
+        double avg_fps = 0.0;
+        for (int i = 0; i < 99; ++i) {
+          frame_time_diffs[i] = frame_times[i+1] - frame_times[i];
+          avg_fps += frame_time_diffs[i];
+        }
+
+        avg_fps /= 99.0f;
+        log->debug("avg time per frame over last 100 frames: {}", avg_fps);
+      }
 
       SDL_Event e;
       while (SDL_PollEvent(&e) != 0) {
         switch (e.type) {
           case SDL_KEYDOWN: {
-            log->debug("SDL_KEYDOWN: {}", e.key.keysym.scancode);
-
-            if (e.key.repeat == false) {
+            //if (e.key.repeat == 0) {
               switch (e.key.keysym.scancode) {
                 case SDL_SCANCODE_DOWN:
+                  active_animation = &down;
+                  curr_pos.y += 5;
                   break;
                 case SDL_SCANCODE_UP:
+                  active_animation = &up;
+                  curr_pos.y -= 5;
                   break;
                 case SDL_SCANCODE_RIGHT:
+                  active_animation = &right;
+                  curr_pos.x += 5;
                   break;
                 case SDL_SCANCODE_LEFT:
+                  active_animation = &left;
+                  curr_pos.x -= 5;
                   break;
                 case SDL_SCANCODE_SPACE:
+                  return EXIT_SUCCESS;
                   break;
                 default:
                   break;
               }
-            }
+
+              if (loop_ticks_start - ticks_last_animation > 150) {
+                curr_sprite_index = static_cast<Uint32>((curr_sprite_index + 1) % active_animation->size());
+                ticks_last_animation = loop_ticks_start;
+              }
+
+              if (curr_pos.x >= screen_w) {
+                curr_pos.x = screen_w - sprite_size;
+              } else if (curr_pos.x < 0) {
+                curr_pos.x = 0;
+              }
+
+              if (curr_pos.y >= screen_h) {
+                curr_pos.y = screen_h - sprite_size;
+              } else if (curr_pos.y < 0) {
+                curr_pos.y = 0;
+              }
+
+          //  }
           }
             break;
 
@@ -156,19 +192,22 @@ int main(int argc, char* argv[]) {
       Uint32 loop_ticks = loop_ticks_end - loop_ticks_start;
       log->trace("loop iteration took {} ms", loop_ticks);
 
-      if (loop_ticks < goal_ticks_per_loop) {
-        Uint32 sleep_ticks = goal_ticks_per_loop - loop_ticks;
-        log->trace("sleeping for {} ms", sleep_ticks);
-        SDL_Delay(sleep_ticks);
-      }
+
+
+//      if (loop_ticks < goal_ticks_per_loop) {
+//        Uint32 sleep_ticks = goal_ticks_per_loop - loop_ticks;
+//        log->trace("sleeping for {} ms", sleep_ticks);
+//        SDL_Delay(sleep_ticks);
+//      }
 
       // update loop_ticks
       loop_ticks = SDL_GetTicks() - loop_ticks_start;
 
       // measure fps every n ticks
+      num_frames++;
       num_frames_since_measure++;
       ticks_since_measure += loop_ticks;
-      Uint32 curr_fps = num_frames_since_measure * 1000 / ticks_since_measure;
+      Uint32 curr_fps = num_frames_since_measure * 1000 / (ticks_since_measure + 1);
       if (ticks_since_measure >= measure_every_n_ticks) {
         log->debug("fps: {}", curr_fps);
         ticks_since_measure = 0;
@@ -176,15 +215,19 @@ int main(int argc, char* argv[]) {
       }
 
       // render shit on screen
-      SDL_SetRenderDrawColor(renderer.get(), 0, 0, 0, SDL_ALPHA_OPAQUE);
+      SDL_SetRenderDrawColor(renderer.get(), 255, 255, 255, SDL_ALPHA_OPAQUE);
       SDL_RenderClear(renderer.get());
 
-      cell.render(*renderer);
-
       // update fps txt on screen
-      auto&[fps_texture, w, h] = fps_textures[curr_fps];
-      SDL_Rect fps_txt_dst_rect {0, 0, w, h};
-      SDL_RenderCopy(renderer.get(), fps_texture.get(), nullptr, &fps_txt_dst_rect);
+      if (curr_fps < max_fps) {
+        auto&[fps_texture, w, h] = fps_textures[curr_fps];
+        SDL_Rect fps_txt_dst_rect {0, 0, w, h};
+        SDL_RenderCopy(renderer.get(), fps_texture.get(), nullptr, &fps_txt_dst_rect);
+      }
+
+      // draw the sprite
+      SDL_Rect player_dst_rect {SDL_UNPACK_POINT(curr_pos), sprite_size*2, sprite_size*2};
+      SDL_RenderCopy(renderer.get(), sprite_sheet_texture.get(), &((*active_animation)[curr_sprite_index]), &player_dst_rect);
 
       SDL_RenderPresent(renderer.get());
     }
@@ -195,4 +238,3 @@ int main(int argc, char* argv[]) {
 
   return EXIT_SUCCESS;
 }
-
