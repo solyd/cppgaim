@@ -1,6 +1,7 @@
 #include <exception>
 #include <iostream>
 #include <memory>
+#include <algorithm>
 
 #include "SDL.h"
 #include "SDL_image.h"
@@ -9,6 +10,7 @@
 #include "spdlog/spdlog.h"
 
 #include "utils/ScopeGuard.h"
+#include "utils/FpsCounter.h"
 
 #include "sdl/Error.h"
 #include "sdl/helpers.h"
@@ -35,6 +37,8 @@ make_fps_textures(SDL_Renderer& renderer, TTF_Font& font, int max_fps) {
 };
 
 int main(int argc, char* argv[]) {
+  using namespace cppgaim;
+
   auto log = spdlog::stdout_color_mt("cppgaim");
   log->set_level(spdlog::level::debug);
 
@@ -47,6 +51,8 @@ int main(int argc, char* argv[]) {
 
     auto screen_w = config["window"]["width"].as<int>();
     auto screen_h = config["window"]["height"].as<int>();
+
+    FpsCounter fps(10);
 
     auto window = sdl::make_window(
       "cppgaim",
@@ -98,39 +104,28 @@ int main(int argc, char* argv[]) {
     SDL_Point curr_pos {50, 50};
     // ================================================================================
 
-    int max_fps = 120;
-    auto fps_textures = make_fps_textures(*renderer, *font, max_fps);
+    const auto fps_cap = config["fps_cap"].as<double>();
+    auto fps_textures = make_fps_textures(*renderer, *font, static_cast<int>(fps_cap));
 
-    Uint32 goal_fps = 60;
-    Uint32 goal_ticks_per_loop = 1000 / goal_fps;
-
-    Uint32 num_frames_since_measure = 0;
-    Uint32 ticks_since_measure = 0;
-    Uint32 measure_every_n_ticks = 1000;
-    Uint32 num_frames = 0;
-    Uint32 ticks_last_animation = 0;
-
-    Uint32 frame_times[100];
-    int frame_times_index = 0;
     while (true) {
-      Uint32 loop_ticks_start = SDL_GetTicks();
+      // TODO(solyd): use SDL_GetPerformanceCounter andSDL_GetPerformanceFrequency
+      auto frame_start_time = SDL_GetTicks();
+      auto last_frame_duration = frame_start_time - fps.last_frame_start_time();
 
-      frame_times[frame_times_index] = loop_ticks_start;
-      frame_times_index++;
+      auto sleep_delta = std::max(
+        0,
+        static_cast<int>(FpsCounter::ms_per_frame_for(fps_cap)) -
+        static_cast<int>(last_frame_duration)
+      );
 
-      if (frame_times_index >= 100) {
-        frame_times_index = 0;
-
-        Uint32 frame_time_diffs[99];
-        double avg_fps = 0.0;
-        for (int i = 0; i < 99; ++i) {
-          frame_time_diffs[i] = frame_times[i+1] - frame_times[i];
-          avg_fps += frame_time_diffs[i];
-        }
-
-        avg_fps /= 99.0f;
-        log->debug("avg time per frame over last 100 frames: {}", avg_fps);
+      if (sleep_delta > 0) {
+        log->debug(">>>>>>>>>>>>>>>>>>>>>>> SLEEEEEPP, for {}", sleep_delta);
+        SDL_Delay(static_cast<Uint32>(sleep_delta));
       }
+
+      // until now the logic belonged to "previous" frame
+      frame_start_time = SDL_GetTicks();
+      fps.mark_frame_start(frame_start_time);
 
       SDL_Event e;
       while (SDL_PollEvent(&e) != 0) {
@@ -161,11 +156,6 @@ int main(int argc, char* argv[]) {
                   break;
               }
 
-              if (loop_ticks_start - ticks_last_animation > 150) {
-                curr_sprite_index = static_cast<Uint32>((curr_sprite_index + 1) % active_animation->size());
-                ticks_last_animation = loop_ticks_start;
-              }
-
               if (curr_pos.x >= screen_w) {
                 curr_pos.x = screen_w - sprite_size;
               } else if (curr_pos.x < 0) {
@@ -188,38 +178,13 @@ int main(int argc, char* argv[]) {
         }
       }
 
-      Uint32 loop_ticks_end = SDL_GetTicks();
-      Uint32 loop_ticks = loop_ticks_end - loop_ticks_start;
-      log->trace("loop iteration took {} ms", loop_ticks);
-
-
-
-//      if (loop_ticks < goal_ticks_per_loop) {
-//        Uint32 sleep_ticks = goal_ticks_per_loop - loop_ticks;
-//        log->trace("sleeping for {} ms", sleep_ticks);
-//        SDL_Delay(sleep_ticks);
-//      }
-
-      // update loop_ticks
-      loop_ticks = SDL_GetTicks() - loop_ticks_start;
-
-      // measure fps every n ticks
-      num_frames++;
-      num_frames_since_measure++;
-      ticks_since_measure += loop_ticks;
-      Uint32 curr_fps = num_frames_since_measure * 1000 / (ticks_since_measure + 1);
-      if (ticks_since_measure >= measure_every_n_ticks) {
-        log->debug("fps: {}", curr_fps);
-        ticks_since_measure = 0;
-        num_frames_since_measure = 0;
-      }
-
       // render shit on screen
       SDL_SetRenderDrawColor(renderer.get(), 255, 255, 255, SDL_ALPHA_OPAQUE);
       SDL_RenderClear(renderer.get());
 
+      auto curr_fps = static_cast<Uint32>(fps.avg());
       // update fps txt on screen
-      if (curr_fps < max_fps) {
+      if (curr_fps < fps_cap) {
         auto&[fps_texture, w, h] = fps_textures[curr_fps];
         SDL_Rect fps_txt_dst_rect {0, 0, w, h};
         SDL_RenderCopy(renderer.get(), fps_texture.get(), nullptr, &fps_txt_dst_rect);

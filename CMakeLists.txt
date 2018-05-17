@@ -35,7 +35,7 @@ include_directories(
         ${external_deps_dir}/fmt/include
 )
 
-add_executable(cppgaim src/main.cpp src/utils/ScopeGuard.h src/sdl/Error.h src/sdl/helpers.h src/utils/custom_unique_ptr.h)
+add_executable(cppgaim src/main.cpp src/utils/ScopeGuard.h src/sdl/Error.h src/sdl/helpers.h src/utils/custom_unique_ptr.h src/utils/FpsCounter.cpp src/utils/FpsCounter.h)
 target_link_libraries(
         cppgaim
         ${SDL2_LIBRARIES}

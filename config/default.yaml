@@ -2,6 +2,8 @@ window:
   width: 800
   height: 600
 
+fps_cap: 60.0
+
 # font:
 #   - name: default
 #     path: resources/fonts/SourceCodePro-Regular.ttf
